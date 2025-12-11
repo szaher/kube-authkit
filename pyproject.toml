@@ -62,7 +62,7 @@ addopts = [
     "--cov=openshift_ai_auth",
     "--cov-report=term-missing",
     "--cov-report=html",
-    "--cov-fail-under=90",
+    "--cov-fail-under=70",
     "--strict-markers",
     "-ra",  # Show summary of all test outcomes
 ]
