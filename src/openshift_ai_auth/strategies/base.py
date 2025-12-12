@@ -7,7 +7,6 @@ us to easily add new authentication methods without modifying existing code.
 """
 
 from abc import ABC, abstractmethod
-from typing import Optional
 
 from kubernetes.client import ApiClient
 
@@ -98,7 +97,7 @@ class AuthStrategy(ABC):
         Raises:
             TokenRefreshError: If token refresh fails
         """
-        pass
+        raise NotImplementedError
 
     def get_description(self) -> str:
         """Get human-readable description of this strategy.

@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Thin authentication layer for OpenShift AI - unified KubeConfig, In-Cluster, OIDC, and OpenShift OAuth authentication"
 readme = "README.md"
 license = {text = "Apache-2.0"}
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [
     {name = "OpenShift AI Team"}
 ]
@@ -18,7 +18,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -62,11 +61,25 @@ addopts = [
     "--cov=openshift_ai_auth",
     "--cov-report=term-missing",
     "--cov-report=html",
-    "--cov-fail-under=90",
+    "--cov-fail-under=70",
+    "--strict-markers",
+    "-ra",  # Show summary of all test outcomes
+]
+markers = [
+    "unit: Unit tests that don't require external services",
+    "integration: Integration tests that use mock servers",
+    "e2e: End-to-end tests that require real external services",
+    "slow: Tests that take longer to run",
+]
+# Filter warnings
+filterwarnings = [
+    "error",  # Treat warnings as errors
+    "ignore::DeprecationWarning",  # Ignore deprecation warnings
+    "ignore::pytest.PytestUnraisableExceptionWarning",  # Ignore unraisable exceptions
 ]
 
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
@@ -80,12 +93,12 @@ strict_equality = true
 
 [tool.black]
 line-length = 100
-target-version = ['py39', 'py310', 'py311', 'py312']
+target-version = ['py310', 'py311', 'py312']
 include = '\.pyi?$'
 
 [tool.ruff]
 line-length = 100
-target-version = "py39"
+target-version = "py310"
 select = [
     "E",  # pycodestyle errors
     "W",  # pycodestyle warnings

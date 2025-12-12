@@ -12,19 +12,16 @@ The strategy follows the OAuth 2.0 and OpenID Connect specifications.
 
 import base64
 import hashlib
-import json
 import logging
-import os
 import secrets
 import threading
 import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Optional, Dict, Any, Tuple
-from urllib.parse import urlencode, urlparse, parse_qs
+from typing import Any
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import requests
-from kubernetes import client
 from kubernetes.client import ApiClient, Configuration
 
 from ..config import AuthConfig
@@ -76,10 +73,10 @@ class OIDCStrategy(AuthStrategy):
             config: AuthConfig instance with OIDC parameters
         """
         super().__init__(config)
-        self._oidc_config: Optional[Dict[str, Any]] = None
-        self._access_token: Optional[str] = None
-        self._refresh_token: Optional[str] = None
-        self._token_expiry: Optional[float] = None
+        self._oidc_config: dict[str, Any] | None = None
+        self._access_token: str | None = None
+        self._refresh_token: str | None = None
+        self._token_expiry: float | None = None
 
     def is_available(self) -> bool:
         """Check if OIDC authentication is available.
@@ -155,7 +152,7 @@ class OIDCStrategy(AuthStrategy):
         # Create and configure ApiClient
         return self._create_api_client()
 
-    def _discover_oidc_config(self) -> Dict[str, Any]:
+    def _discover_oidc_config(self) -> dict[str, Any]:
         """Discover OIDC configuration from issuer.
 
         Fetches the .well-known/openid-configuration document.
@@ -210,7 +207,7 @@ class OIDCStrategy(AuthStrategy):
         if not device_authorization_endpoint:
             raise AuthenticationError(
                 "Device Code Flow not supported by this OIDC provider",
-                f"The OIDC discovery document does not include 'device_authorization_endpoint'"
+                "The OIDC discovery document does not include 'device_authorization_endpoint'"
             )
 
         # Request device code
@@ -246,10 +243,10 @@ class OIDCStrategy(AuthStrategy):
         interval = device_response.get("interval", 5)
 
         print(f"\n{'='*60}")
-        print(f"OIDC Device Code Authentication")
+        print("OIDC Device Code Authentication")
         print(f"{'='*60}")
         if verification_uri_complete:
-            print(f"\nPlease visit this URL to authenticate:")
+            print("\nPlease visit this URL to authenticate:")
             print(f"\n  {verification_uri_complete}\n")
         else:
             print(f"\nPlease visit this URL: {verification_uri}")
@@ -413,7 +410,7 @@ class OIDCStrategy(AuthStrategy):
         auth_url = f"{authorization_endpoint}?{urlencode(auth_params)}"
 
         # Open browser
-        print(f"\nOpening browser for authentication...")
+        print("\nOpening browser for authentication...")
         print(f"If the browser doesn't open, visit this URL:\n{auth_url}\n")
 
         webbrowser.open(auth_url)
@@ -579,7 +576,7 @@ class OIDCStrategy(AuthStrategy):
         logger.info(f"Created ApiClient for {configuration.host}")
         return api_client
 
-    def _load_refresh_token(self) -> Optional[str]:
+    def _load_refresh_token(self) -> str | None:
         """Load refresh token from system keyring.
 
         Returns:

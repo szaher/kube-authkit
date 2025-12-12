@@ -8,7 +8,6 @@ authentication configuration options.
 import os
 import warnings
 from dataclasses import dataclass, field
-from typing import List, Optional
 
 from .exceptions import ConfigurationError
 
@@ -55,18 +54,18 @@ class AuthConfig:
     """
 
     method: str = "auto"
-    k8s_api_host: Optional[str] = None
-    oidc_issuer: Optional[str] = None
-    client_id: Optional[str] = None
-    client_secret: Optional[str] = None
-    openshift_token: Optional[str] = None
-    scopes: List[str] = field(default_factory=lambda: ["openid"])
+    k8s_api_host: str | None = None
+    oidc_issuer: str | None = None
+    client_id: str | None = None
+    client_secret: str | None = None
+    openshift_token: str | None = None
+    scopes: list[str] = field(default_factory=lambda: ["openid"])
     use_device_flow: bool = False
     use_keyring: bool = False
     oidc_callback_port: int = 8080
-    ca_cert: Optional[str] = None
+    ca_cert: str | None = None
     verify_ssl: bool = True
-    kubeconfig_path: Optional[str] = None
+    kubeconfig_path: str | None = None
 
     def __post_init__(self) -> None:
         """Validate configuration after initialization.

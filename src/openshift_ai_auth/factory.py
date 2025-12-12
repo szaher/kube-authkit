@@ -8,7 +8,6 @@ based on the environment and configuration.
 
 import logging
 import os
-from typing import Optional
 
 from kubernetes.client import ApiClient
 
@@ -23,7 +22,7 @@ from .strategies.openshift import OpenShiftOAuthStrategy
 logger = logging.getLogger(__name__)
 
 
-def get_k8s_client(config: Optional[AuthConfig] = None) -> ApiClient:
+def get_k8s_client(config: AuthConfig | None = None) -> ApiClient:
     """Get authenticated Kubernetes API client.
 
     This is the main entry point for the library. It automatically detects

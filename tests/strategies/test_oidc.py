@@ -10,19 +10,17 @@ Tests cover:
 - Error handling
 """
 
-import json
+from unittest.mock import Mock, patch
+
 import pytest
-from unittest.mock import Mock, patch, MagicMock, call
-from pathlib import Path
 
 from openshift_ai_auth import AuthConfig
-from openshift_ai_auth.strategies.oidc import OIDCStrategy
 from openshift_ai_auth.exceptions import (
     AuthenticationError,
     ConfigurationError,
     StrategyNotAvailableError,
 )
-
+from openshift_ai_auth.strategies.oidc import OIDCStrategy
 
 # Mock OIDC discovery document
 MOCK_OIDC_CONFIG = {
@@ -297,6 +295,141 @@ class TestOIDCDeviceCodeFlow:
 
         assert "expired_token" in str(exc_info.value)
 
+    @patch('openshift_ai_auth.strategies.oidc.requests.get')
+    @patch('openshift_ai_auth.strategies.oidc.requests.post')
+    @patch('builtins.print')
+    @patch('openshift_ai_auth.strategies.oidc.time.sleep')
+    def test_device_flow_slow_down(self, mock_sleep, mock_print, mock_post, mock_get):
+        """Test Device Code Flow slow_down error handling."""
+        # Mock discovery
+        mock_get_response = Mock()
+        mock_get_response.json.return_value = MOCK_OIDC_CONFIG
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        # Mock device authorization
+        device_response = Mock()
+        device_response.json.return_value = {
+            "device_code": "test-device-code",
+            "user_code": "ABCD-1234",
+            "verification_uri": "https://example.com/device",
+            "interval": 0.1
+        }
+        device_response.raise_for_status.return_value = None
+
+        # Mock token polling - slow_down then success
+        slow_down_response = Mock()
+        slow_down_response.status_code = 400
+        slow_down_response.json.return_value = {"error": "slow_down"}
+
+        success_response = Mock()
+        success_response.status_code = 200
+        success_response.json.return_value = {
+            "access_token": "test-token",
+            "refresh_token": "test-refresh",
+            "expires_in": 3600
+        }
+
+        mock_post.side_effect = [device_response, slow_down_response, success_response]
+
+        config = AuthConfig(
+            method="oidc",
+            oidc_issuer="https://keycloak.example.com/auth/realms/test",
+            client_id="test-client",
+            use_device_flow=True
+        )
+        strategy = OIDCStrategy(config)
+
+        strategy._authenticate_device_flow()
+
+        # Verify it handled slow_down and succeeded
+        assert strategy._access_token == "test-token"
+
+    @patch('openshift_ai_auth.strategies.oidc.requests.get')
+    @patch('openshift_ai_auth.strategies.oidc.requests.post')
+    @patch('builtins.print')
+    @patch('openshift_ai_auth.strategies.oidc.time.sleep')
+    def test_device_flow_unknown_error(self, mock_sleep, mock_print, mock_post, mock_get):
+        """Test Device Code Flow with unknown error."""
+        # Mock discovery
+        mock_get_response = Mock()
+        mock_get_response.json.return_value = MOCK_OIDC_CONFIG
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        # Mock device authorization
+        device_response = Mock()
+        device_response.json.return_value = {
+            "device_code": "test-device-code",
+            "user_code": "ABCD-1234",
+            "verification_uri": "https://example.com/device",
+            "interval": 0.1
+        }
+        device_response.raise_for_status.return_value = None
+
+        # Mock token polling - unknown error
+        error_response = Mock()
+        error_response.status_code = 400
+        error_response.json.return_value = {
+            "error": "unknown_error",
+            "error_description": "Something went wrong"
+        }
+
+        mock_post.side_effect = [device_response, error_response]
+
+        config = AuthConfig(
+            method="oidc",
+            oidc_issuer="https://keycloak.example.com/auth/realms/test",
+            client_id="test-client",
+            use_device_flow=True
+        )
+        strategy = OIDCStrategy(config)
+
+        with pytest.raises(AuthenticationError) as exc_info:
+            strategy._authenticate_device_flow()
+
+        assert "unknown_error" in str(exc_info.value)
+
+    @patch('openshift_ai_auth.strategies.oidc.requests.get')
+    @patch('openshift_ai_auth.strategies.oidc.requests.post')
+    @patch('builtins.print')
+    @patch('openshift_ai_auth.strategies.oidc.time.sleep')
+    def test_device_flow_polling_network_error(self, mock_sleep, mock_print, mock_post, mock_get):
+        """Test Device Code Flow when polling fails with network error."""
+        import requests
+
+        # Mock discovery
+        mock_get_response = Mock()
+        mock_get_response.json.return_value = MOCK_OIDC_CONFIG
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        # Mock device authorization
+        device_response = Mock()
+        device_response.json.return_value = {
+            "device_code": "test-device-code",
+            "user_code": "ABCD-1234",
+            "verification_uri": "https://example.com/device",
+            "interval": 0.1
+        }
+        device_response.raise_for_status.return_value = None
+
+        # Mock token polling - network error
+        mock_post.side_effect = [device_response, requests.RequestException("Network error during polling")]
+
+        config = AuthConfig(
+            method="oidc",
+            oidc_issuer="https://keycloak.example.com/auth/realms/test",
+            client_id="test-client",
+            use_device_flow=True
+        )
+        strategy = OIDCStrategy(config)
+
+        with pytest.raises(AuthenticationError) as exc_info:
+            strategy._authenticate_device_flow()
+
+        assert "Failed to poll for device code authorization" in str(exc_info.value)
+
 
 class TestOIDCAuthorizationCodeFlow:
     """Test Authorization Code Flow with PKCE."""
@@ -385,6 +518,37 @@ class TestOIDCTokenRefresh:
 
     @patch('openshift_ai_auth.strategies.oidc.requests.get')
     @patch('openshift_ai_auth.strategies.oidc.requests.post')
+    def test_refresh_access_token_error_invalid_json(self, mock_post, mock_get):
+        """Test refresh token when error response has invalid JSON."""
+        import requests
+
+        # Mock discovery
+        mock_get_response = Mock()
+        mock_get_response.json.return_value = MOCK_OIDC_CONFIG
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        # Mock refresh token request with invalid JSON in error
+        error_response = Mock()
+        error_response.json.side_effect = ValueError("Invalid JSON")
+        mock_post_error = requests.RequestException("Token refresh failed")
+        mock_post_error.response = error_response
+        mock_post.side_effect = mock_post_error
+
+        config = AuthConfig(
+            method="oidc",
+            oidc_issuer="https://keycloak.example.com/auth/realms/test",
+            client_id="test-client"
+        )
+        strategy = OIDCStrategy(config)
+
+        with pytest.raises(AuthenticationError) as exc_info:
+            strategy._refresh_access_token("old-refresh-token")
+
+        assert "Failed to refresh access token" in str(exc_info.value)
+
+    @patch('openshift_ai_auth.strategies.oidc.requests.get')
+    @patch('openshift_ai_auth.strategies.oidc.requests.post')
     def test_refresh_access_token_success(self, mock_post, mock_get):
         """Test successful token refresh."""
         # Mock discovery
@@ -415,6 +579,65 @@ class TestOIDCTokenRefresh:
         assert strategy._access_token == "new-access-token"
         assert strategy._refresh_token == "new-refresh-token"
         assert strategy._token_expiry is not None
+
+    @patch('openshift_ai_auth.strategies.oidc.requests.get')
+    @patch('openshift_ai_auth.strategies.oidc.requests.post')
+    def test_refresh_access_token_with_client_secret(self, mock_post, mock_get):
+        """Test token refresh with client_secret."""
+        # Mock discovery
+        mock_get_response = Mock()
+        mock_get_response.json.return_value = MOCK_OIDC_CONFIG
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        # Mock refresh token response
+        mock_post_response = Mock()
+        mock_post_response.json.return_value = {
+            "access_token": "new-access-token",
+            "refresh_token": "new-refresh-token",
+            "expires_in": 7200
+        }
+        mock_post_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_post_response
+
+        config = AuthConfig(
+            method="oidc",
+            oidc_issuer="https://keycloak.example.com/auth/realms/test",
+            client_id="test-client",
+            client_secret="test-secret"
+        )
+        strategy = OIDCStrategy(config)
+
+        strategy._refresh_access_token("old-refresh-token")
+
+        # Verify client_secret was included in request
+        call_data = mock_post.call_args[1]['data']
+        assert call_data['client_secret'] == 'test-secret'
+        assert strategy._access_token == "new-access-token"
+
+    @patch('openshift_ai_auth.strategies.oidc.requests.get')
+    def test_refresh_access_token_no_token_endpoint(self, mock_get):
+        """Test token refresh when OIDC config missing token_endpoint."""
+        # Mock discovery without token_endpoint
+        config_without_token = MOCK_OIDC_CONFIG.copy()
+        del config_without_token["token_endpoint"]
+
+        mock_get_response = Mock()
+        mock_get_response.json.return_value = config_without_token
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        config = AuthConfig(
+            method="oidc",
+            oidc_issuer="https://keycloak.example.com/auth/realms/test",
+            client_id="test-client"
+        )
+        strategy = OIDCStrategy(config)
+
+        with pytest.raises(AuthenticationError) as exc_info:
+            strategy._refresh_access_token("test-refresh-token")
+
+        assert "Token refresh not supported" in str(exc_info.value)
 
     @patch('openshift_ai_auth.strategies.oidc.requests.get')
     @patch('openshift_ai_auth.strategies.oidc.requests.post')
@@ -501,6 +724,79 @@ class TestOIDCKeyringIntegration:
         token = strategy._load_refresh_token()
 
         assert token is None
+
+    def test_load_refresh_token_success_with_keyring(self):
+        """Test successfully loading refresh token from keyring."""
+        mock_keyring = Mock()
+        mock_keyring.get_password.return_value = "stored-token"
+
+        with patch.dict('sys.modules', {'keyring': mock_keyring}):
+            config = AuthConfig(
+                method="oidc",
+                oidc_issuer="https://keycloak.example.com/auth/realms/test",
+                client_id="test-client",
+                use_keyring=True
+            )
+            strategy = OIDCStrategy(config)
+
+            token = strategy._load_refresh_token()
+
+            # Should return the stored token
+            assert token == "stored-token"
+
+    def test_save_refresh_token_success_with_keyring(self):
+        """Test successfully saving refresh token to keyring."""
+        mock_keyring = Mock()
+
+        with patch.dict('sys.modules', {'keyring': mock_keyring}):
+            config = AuthConfig(
+                method="oidc",
+                oidc_issuer="https://keycloak.example.com/auth/realms/test",
+                client_id="test-client",
+                use_keyring=True
+            )
+            strategy = OIDCStrategy(config)
+
+            strategy._save_refresh_token("test-token")
+
+            # Should call set_password
+            mock_keyring.set_password.assert_called_once()
+
+    def test_load_refresh_token_exception(self):
+        """Test loading refresh token when keyring raises exception."""
+        mock_keyring = Mock()
+        mock_keyring.get_password.side_effect = Exception("Keyring error")
+
+        with patch.dict('sys.modules', {'keyring': mock_keyring}):
+            config = AuthConfig(
+                method="oidc",
+                oidc_issuer="https://keycloak.example.com/auth/realms/test",
+                client_id="test-client",
+                use_keyring=True
+            )
+            strategy = OIDCStrategy(config)
+
+            token = strategy._load_refresh_token()
+
+            # Should return None when keyring raises exception
+            assert token is None
+
+    def test_save_refresh_token_exception(self):
+        """Test saving refresh token when keyring raises exception."""
+        mock_keyring = Mock()
+        mock_keyring.set_password.side_effect = Exception("Keyring error")
+
+        with patch.dict('sys.modules', {'keyring': mock_keyring}):
+            config = AuthConfig(
+                method="oidc",
+                oidc_issuer="https://keycloak.example.com/auth/realms/test",
+                client_id="test-client",
+                use_keyring=True
+            )
+            strategy = OIDCStrategy(config)
+
+            # Should not raise, just log warning
+            strategy._save_refresh_token("test-token")
 
 
 class TestOIDCApiClientCreation:
@@ -659,4 +955,177 @@ class TestOIDCAuthenticate:
 
         mock_auth_code_flow.assert_called_once()
         mock_create_client.assert_called_once()
+        assert result == mock_api_client
+
+    @patch('openshift_ai_auth.strategies.oidc.requests.get')
+    @patch('openshift_ai_auth.strategies.oidc.requests.post')
+    def test_device_flow_request_error(self, mock_post, mock_get):
+        """Test Device Code Flow when device authorization request fails."""
+        import requests
+
+        # Mock discovery
+        mock_get_response = Mock()
+        mock_get_response.json.return_value = MOCK_OIDC_CONFIG
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        # Mock device authorization request failure
+        mock_post.side_effect = requests.RequestException("Network error")
+
+        config = AuthConfig(
+            method="oidc",
+            oidc_issuer="https://keycloak.example.com/auth/realms/test",
+            client_id="test-client",
+            use_device_flow=True
+        )
+        strategy = OIDCStrategy(config)
+
+        with pytest.raises(AuthenticationError) as exc_info:
+            strategy._authenticate_device_flow()
+
+        assert "Failed to request device code" in str(exc_info.value)
+
+    @patch('openshift_ai_auth.strategies.oidc.requests.get')
+    @patch('openshift_ai_auth.strategies.oidc.requests.post')
+    @patch('builtins.print')
+    @patch('openshift_ai_auth.strategies.oidc.time.sleep')
+    def test_device_flow_with_client_secret(self, mock_sleep, mock_print, mock_post, mock_get):
+        """Test Device Code Flow with client_secret."""
+        # Mock discovery
+        mock_get_response = Mock()
+        mock_get_response.json.return_value = MOCK_OIDC_CONFIG
+        mock_get_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_get_response
+
+        # Mock device authorization
+        device_response = Mock()
+        device_response.json.return_value = {
+            "device_code": "test-device-code",
+            "user_code": "ABCD-1234",
+            "verification_uri": "https://example.com/device",
+            "interval": 0.1
+        }
+        device_response.raise_for_status.return_value = None
+
+        # Mock token polling - success on first try
+        success_response = Mock()
+        success_response.status_code = 200
+        success_response.json.return_value = {
+            "access_token": "test-access-token",
+            "refresh_token": "test-refresh-token",
+            "expires_in": 3600
+        }
+
+        mock_post.side_effect = [device_response, success_response]
+
+        config = AuthConfig(
+            method="oidc",
+            oidc_issuer="https://keycloak.example.com/auth/realms/test",
+            client_id="test-client",
+            client_secret="test-secret",
+            use_device_flow=True
+        )
+        strategy = OIDCStrategy(config)
+
+        strategy._authenticate_device_flow()
+
+        # Verify client_secret was included in requests
+        assert mock_post.call_count == 2
+        # Check device authorization request includes client_secret
+        device_call_data = mock_post.call_args_list[0][1]['data']
+        assert device_call_data['client_secret'] == 'test-secret'
+        # Check token poll request includes client_secret
+        poll_call_data = mock_post.call_args_list[1][1]['data']
+        assert poll_call_data['client_secret'] == 'test-secret'
+
+    @patch.object(OIDCStrategy, 'is_available')
+    @patch.object(OIDCStrategy, '_load_refresh_token')
+    @patch.object(OIDCStrategy, '_refresh_access_token')
+    @patch.object(OIDCStrategy, '_create_api_client')
+    def test_authenticate_with_stored_refresh_token(self, mock_create_client, mock_refresh, mock_load, mock_is_available):
+        """Test authenticate using stored refresh token from keyring."""
+        mock_is_available.return_value = True
+        mock_load.return_value = "stored-refresh-token"
+
+        # Mock the refresh to set an access token
+        def set_access_token(token):
+            strategy._access_token = "refreshed-access-token"
+        mock_refresh.side_effect = set_access_token
+
+        mock_api_client = Mock()
+        mock_create_client.return_value = mock_api_client
+
+        config = AuthConfig(
+            method="oidc",
+            oidc_issuer="https://keycloak.example.com/auth/realms/test",
+            client_id="test-client",
+            use_keyring=True,
+            k8s_api_host="https://api.example.com:6443"
+        )
+        strategy = OIDCStrategy(config)
+
+        result = strategy.authenticate()
+
+        # Verify refresh token was loaded and used
+        mock_load.assert_called_once()
+        mock_refresh.assert_called_once_with("stored-refresh-token")
+        mock_create_client.assert_called_once()
+        assert result == mock_api_client
+
+    @patch.object(OIDCStrategy, 'is_available')
+    @patch.object(OIDCStrategy, '_load_refresh_token')
+    @patch.object(OIDCStrategy, '_refresh_access_token')
+    @patch.object(OIDCStrategy, '_authenticate_device_flow')
+    @patch.object(OIDCStrategy, '_create_api_client')
+    def test_authenticate_stored_token_fails_fallback_to_interactive(self, mock_create_client, mock_device_flow, mock_refresh, mock_load, mock_is_available):
+        """Test authenticate falls back to interactive when stored token refresh fails."""
+        mock_is_available.return_value = True
+        mock_load.return_value = "invalid-refresh-token"
+        mock_refresh.side_effect = Exception("Invalid refresh token")
+        mock_api_client = Mock()
+        mock_create_client.return_value = mock_api_client
+
+        config = AuthConfig(
+            method="oidc",
+            oidc_issuer="https://keycloak.example.com/auth/realms/test",
+            client_id="test-client",
+            use_keyring=True,
+            use_device_flow=True,
+            k8s_api_host="https://api.example.com:6443"
+        )
+        strategy = OIDCStrategy(config)
+
+        result = strategy.authenticate()
+
+        # Verify it tried to use stored token but fell back to device flow
+        mock_load.assert_called_once()
+        mock_refresh.assert_called_once_with("invalid-refresh-token")
+        mock_device_flow.assert_called_once()
+        assert result == mock_api_client
+
+    @patch.object(OIDCStrategy, 'is_available')
+    @patch.object(OIDCStrategy, '_authenticate_device_flow')
+    @patch.object(OIDCStrategy, '_save_refresh_token')
+    @patch.object(OIDCStrategy, '_create_api_client')
+    def test_authenticate_saves_refresh_token_to_keyring(self, mock_create_client, mock_save, mock_device_flow, mock_is_available):
+        """Test authenticate saves refresh token to keyring after successful auth."""
+        mock_is_available.return_value = True
+        mock_api_client = Mock()
+        mock_create_client.return_value = mock_api_client
+
+        config = AuthConfig(
+            method="oidc",
+            oidc_issuer="https://keycloak.example.com/auth/realms/test",
+            client_id="test-client",
+            use_keyring=True,
+            use_device_flow=True,
+            k8s_api_host="https://api.example.com:6443"
+        )
+        strategy = OIDCStrategy(config)
+        strategy._refresh_token = "new-refresh-token"
+
+        result = strategy.authenticate()
+
+        # Verify refresh token was saved
+        mock_save.assert_called_once_with("new-refresh-token")
         assert result == mock_api_client

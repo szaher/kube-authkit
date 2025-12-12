@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  # Keycloak for real OIDC testing
+  keycloak:
+    image: quay.io/keycloak/keycloak:23.0
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+    ports:
+      - "8180:8080"
+    command:
+      - start-dev
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    networks:
+      - test-network
+
+  # Mock Kubernetes API server
+  mock-k8s-api:
+    image: python:3.11-slim
+    working_dir: /app
+    volumes:
+      - ./tests/mock_k8s_api:/app
+    command: python mock_k8s_api.py
+    ports:
+      - "6443:6443"
+    networks:
+      - test-network
+    depends_on:
+      keycloak:
+        condition: service_healthy
+
+  # Test runner
+  test-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    volumes:
+      - .:/app
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      # Point to Keycloak running in Docker
+      OIDC_ISSUER: http://keycloak:8080/realms/test
+      OIDC_CLIENT_ID: test-client
+      OIDC_CLIENT_SECRET: test-secret
+      K8S_API_HOST: https://mock-k8s-api:6443
+      # Skip SSL verification for test environment
+      PYTHONDONTWRITEBYTECODE: 1
+      PYTHONUNBUFFERED: 1
+    networks:
+      - test-network
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      mock-k8s-api:
+        condition: service_started
+    command: >
+      bash -c "
+        pip install -e . &&
+        pytest tests/integration/ -v -m integration --tb=short
+      "
+
+networks:
+  test-network:
+    driver: bridge

@@ -10,7 +10,8 @@ import logging
 import os
 from pathlib import Path
 
-from kubernetes import client, config as k8s_config
+from kubernetes import client
+from kubernetes import config as k8s_config
 from kubernetes.client import ApiClient
 from kubernetes.config import ConfigException
 

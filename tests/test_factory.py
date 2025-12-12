@@ -8,12 +8,14 @@ Tests cover:
 - get_k8s_client() function
 """
 
-import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
-from openshift_ai_auth import get_k8s_client, AuthConfig
+import pytest
+
+from openshift_ai_auth import AuthConfig, get_k8s_client
 from openshift_ai_auth.exceptions import AuthenticationError, ConfigurationError
 from openshift_ai_auth.factory import AuthFactory
+from openshift_ai_auth.strategies.openshift import OpenShiftOAuthStrategy
 
 
 class TestGetK8sClient:
@@ -74,7 +76,7 @@ class TestAuthFactoryStrategySelection:
         """Test that unknown method raises ConfigurationError."""
         # The validation happens in AuthConfig.__post_init__, not in factory.get_strategy()
         with pytest.raises(ConfigurationError) as exc_info:
-            config = AuthConfig(method="unknown")
+            AuthConfig(method="unknown")
 
         assert "Invalid authentication method" in str(exc_info.value)
 
@@ -190,3 +192,74 @@ class TestAuthFactoryHasOIDCEnvVars:
         factory = AuthFactory(config)
 
         assert factory._has_oidc_env_vars() is False
+
+
+class TestAuthFactoryErrorHandling:
+    """Test error handling in AuthFactory."""
+
+    def test_get_k8s_client_success(self, mock_kubeconfig):
+        """Test get_k8s_client successfully returns ApiClient."""
+        config = AuthConfig(method="kubeconfig", kubeconfig_path=str(mock_kubeconfig))
+
+        client = get_k8s_client(config)
+
+        assert client is not None
+        assert client.configuration.host == "https://127.0.0.1:6443"
+
+    @patch('openshift_ai_auth.factory.AuthFactory.get_strategy')
+    def test_get_k8s_client_strategy_error(self, mock_get_strategy):
+        """Test get_k8s_client handles strategy errors."""
+        mock_get_strategy.side_effect = ConfigurationError("Strategy error", "Details")
+
+        config = AuthConfig(method="auto")
+
+        with pytest.raises(ConfigurationError):
+            get_k8s_client(config)
+
+    @patch('openshift_ai_auth.strategies.kubeconfig.KubeConfigStrategy.is_available')
+    def test_get_strategy_explicit_method_not_available(self, mock_is_available, mock_kubeconfig):
+        """Test get_strategy raises error when explicit method not available."""
+        mock_is_available.return_value = False
+
+        config = AuthConfig(method="kubeconfig", kubeconfig_path=str(mock_kubeconfig))
+        factory = AuthFactory(config)
+
+        with pytest.raises(ConfigurationError) as exc_info:
+            factory.get_strategy()
+
+        assert "not available" in str(exc_info.value)
+
+    def test_auto_detect_with_openshift_token_env(self, monkeypatch):
+        """Test auto-detection with OPENSHIFT_TOKEN environment variable."""
+        monkeypatch.setenv("OPENSHIFT_TOKEN", "sha256~test-token")
+        monkeypatch.delenv("KUBECONFIG", raising=False)
+
+        config = AuthConfig(
+            method="auto",
+            k8s_api_host="https://api.cluster.example.com:6443"
+        )
+        factory = AuthFactory(config)
+
+        strategy = factory._auto_detect_strategy()
+
+        assert isinstance(strategy, OpenShiftOAuthStrategy)
+
+    @patch('openshift_ai_auth.strategies.openshift.OpenShiftOAuthStrategy.is_available')
+    @patch('openshift_ai_auth.strategies.incluster.InClusterStrategy.is_available')
+    @patch('openshift_ai_auth.strategies.kubeconfig.KubeConfigStrategy.is_available')
+    def test_auto_detect_openshift_not_available_fallback(self, mock_kube_avail, mock_incluster_avail, mock_openshift_avail, monkeypatch):
+        """Test auto-detection falls back when OpenShift not available."""
+        monkeypatch.setenv("OPENSHIFT_TOKEN", "sha256~test-token")
+        monkeypatch.delenv("KUBECONFIG", raising=False)
+        mock_openshift_avail.return_value = False
+        mock_incluster_avail.return_value = False
+        mock_kube_avail.return_value = False
+
+        config = AuthConfig(method="auto", k8s_api_host="https://api.cluster.example.com:6443")
+        factory = AuthFactory(config)
+
+        # Should raise AuthenticationError when all strategies are unavailable
+        with pytest.raises(AuthenticationError) as exc_info:
+            factory._auto_detect_strategy()
+
+        assert "No authentication method available" in str(exc_info.value)

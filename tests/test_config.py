@@ -9,7 +9,6 @@ Tests cover:
 - Sensitive data redaction
 """
 
-import os
 import warnings
 from pathlib import Path
 
@@ -171,7 +170,7 @@ class TestAuthConfigSecurityWarnings:
         """Test that verify_ssl=False emits security warning."""
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            config = AuthConfig(verify_ssl=False)
+            AuthConfig(verify_ssl=False)
 
             assert len(w) == 1
             assert issubclass(w[0].category, SecurityWarning)
@@ -181,7 +180,7 @@ class TestAuthConfigSecurityWarnings:
         """Test that http:// issuer emits security warning."""
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            config = AuthConfig(
+            AuthConfig(
                 method="oidc",
                 oidc_issuer="http://insecure.example.com",
                 client_id="test-client"

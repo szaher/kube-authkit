@@ -9,19 +9,17 @@ Tests cover:
 - Error handling
 """
 
-import json
+from unittest.mock import Mock, patch
+
 import pytest
-from unittest.mock import Mock, patch, MagicMock
-from pathlib import Path
 
 from openshift_ai_auth import AuthConfig
-from openshift_ai_auth.strategies.openshift import OpenShiftOAuthStrategy
 from openshift_ai_auth.exceptions import (
     AuthenticationError,
     ConfigurationError,
     StrategyNotAvailableError,
 )
-
+from openshift_ai_auth.strategies.openshift import OpenShiftOAuthStrategy
 
 # Mock OpenShift OAuth metadata
 MOCK_OAUTH_METADATA = {
@@ -425,3 +423,49 @@ class TestOpenShiftOAuthInteractiveFlow:
         # and threading, so we'll just verify the discovery works
         metadata = strategy._discover_oauth_metadata()
         assert metadata == MOCK_OAUTH_METADATA
+
+    @patch.object(OpenShiftOAuthStrategy, 'is_available')
+    @patch.object(OpenShiftOAuthStrategy, '_load_token')
+    @patch.object(OpenShiftOAuthStrategy, '_create_api_client')
+    def test_authenticate_with_stored_token_from_keyring(self, mock_create_client, mock_load, mock_is_available):
+        """Test authenticate using stored token from keyring."""
+        mock_is_available.return_value = True
+        mock_load.return_value = "stored-sha256~token"
+        mock_api_client = Mock()
+        mock_create_client.return_value = mock_api_client
+
+        config = AuthConfig(
+            method="openshift",
+            k8s_api_host="https://api.cluster.example.com:6443",
+            use_keyring=True
+        )
+        strategy = OpenShiftOAuthStrategy(config)
+
+        result = strategy.authenticate()
+
+        # Verify token was loaded from keyring
+        mock_load.assert_called_once()
+        assert strategy._access_token == "stored-sha256~token"
+        mock_create_client.assert_called_once()
+        assert result == mock_api_client
+
+    @patch.object(OpenShiftOAuthStrategy, '_save_token')
+    @patch.object(OpenShiftOAuthStrategy, '_create_api_client')
+    def test_authenticate_saves_token_to_keyring(self, mock_create_client, mock_save):
+        """Test authenticate saves token to keyring after authentication."""
+        mock_api_client = Mock()
+        mock_create_client.return_value = mock_api_client
+
+        config = AuthConfig(
+            method="openshift",
+            k8s_api_host="https://api.cluster.example.com:6443",
+            openshift_token="sha256~explicit-token",
+            use_keyring=True
+        )
+        strategy = OpenShiftOAuthStrategy(config)
+
+        result = strategy.authenticate()
+
+        # Verify token was saved to keyring
+        mock_save.assert_called_once_with("sha256~explicit-token")
+        assert result == mock_api_client

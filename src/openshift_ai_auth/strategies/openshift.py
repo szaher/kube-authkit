@@ -14,26 +14,22 @@ behaviors and endpoints.
 
 import base64
 import hashlib
-import json
 import logging
 import os
 import secrets
 import threading
-import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Optional, Dict, Any, Tuple
-from urllib.parse import urlencode, urlparse, parse_qs
+from typing import Any
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import requests
-from kubernetes import client
 from kubernetes.client import ApiClient, Configuration
 
 from ..config import AuthConfig
 from ..exceptions import (
     AuthenticationError,
     ConfigurationError,
-    OpenShiftOAuthError,
     StrategyNotAvailableError,
 )
 from .base import AuthStrategy
@@ -81,8 +77,8 @@ class OpenShiftOAuthStrategy(AuthStrategy):
             config: AuthConfig instance with OpenShift parameters
         """
         super().__init__(config)
-        self._oauth_metadata: Optional[Dict[str, Any]] = None
-        self._access_token: Optional[str] = None
+        self._oauth_metadata: dict[str, Any] | None = None
+        self._access_token: str | None = None
 
     def is_available(self) -> bool:
         """Check if OpenShift OAuth authentication is available.
@@ -164,7 +160,7 @@ class OpenShiftOAuthStrategy(AuthStrategy):
         # Create and configure ApiClient
         return self._create_api_client()
 
-    def _discover_oauth_metadata(self) -> Dict[str, Any]:
+    def _discover_oauth_metadata(self) -> dict[str, Any]:
         """Discover OpenShift OAuth server metadata.
 
         Fetches the /.well-known/oauth-authorization-server document.
@@ -297,7 +293,7 @@ class OpenShiftOAuthStrategy(AuthStrategy):
         auth_url = f"{authorization_endpoint}?{urlencode(auth_params)}"
 
         # Open browser
-        print(f"\nOpening browser for OpenShift authentication...")
+        print("\nOpening browser for OpenShift authentication...")
         print(f"If the browser doesn't open, visit this URL:\n{auth_url}\n")
 
         webbrowser.open(auth_url)
@@ -395,7 +391,7 @@ class OpenShiftOAuthStrategy(AuthStrategy):
         logger.info(f"Created ApiClient for {configuration.host}")
         return api_client
 
-    def _load_token(self) -> Optional[str]:
+    def _load_token(self) -> str | None:
         """Load token from system keyring.
 
         Returns:
